@@ -49,7 +49,7 @@ disk_usage_path = "/"
 [containers]
 engine = "podman"       # "podman" or "none"
 rootless = [{ user = "monitor", uid = 1000 }]
-include = []           # empty = all containers
+include = []           # empty = all containers; match sanitized names (my-app -> my_app)
 exclude = []           # applied after include
 ```
 
