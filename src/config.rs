@@ -87,8 +87,12 @@ impl Config {
         if sample != 0 && (sample < 5 || !interval.is_multiple_of(sample)) {
             return Err("sample_secs must be at least 5 and divide interval_secs".into());
         }
-        if !["podman", "none"].contains(&self.containers.engine.as_str()) {
-            return Err("engine must be podman or none".into());
+        if !["podman", "docker", "none"].contains(&self.containers.engine.as_str()) {
+            return Err("engine must be podman, docker or none".into());
+        }
+        // shortcut: rootless Docker needs DOCKER_HOST per user; add when a host runs it.
+        if self.containers.engine == "docker" && !self.containers.rootless.is_empty() {
+            return Err("rootless is only supported with podman".into());
         }
         Ok(())
     }
@@ -118,7 +122,11 @@ mod tests {
             VALID.replace("interval_secs=300", "interval_secs=59"),
             VALID.replace("interval_secs=300", "interval_secs=300\nsample_secs=4"),
             VALID.replace("interval_secs=300", "interval_secs=300\nsample_secs=7"),
-            VALID.replace("engine='none'", "engine='docker'"),
+            VALID.replace("engine='none'", "engine='lxc'"),
+            VALID.replace(
+                "engine='none'",
+                "engine='docker'\nrootless=[{user='u',uid=1000}]",
+            ),
         ] {
             assert!(toml::from_str::<Config>(&text).unwrap().validate().is_err());
         }
@@ -126,6 +134,8 @@ mod tests {
     #[test]
     fn accepts_temperature_and_smart() {
         let text = VALID.replace("'network','disk_io'", "'temperature','smart'");
+        assert!(toml::from_str::<Config>(&text).unwrap().validate().is_ok());
+        let text = VALID.replace("engine='none'", "engine='docker'");
         assert!(toml::from_str::<Config>(&text).unwrap().validate().is_ok());
     }
 }

@@ -221,13 +221,14 @@ impl Collector {
                     format!("XDG_RUNTIME_DIR=/run/user/{}", user.uid),
                 ];
             }
+            let engine = &self.config.containers.engine;
             let mut cmd = prefix.clone();
-            cmd.extend(["podman".into(), "ps".into(), "-q".into()]);
+            cmd.extend([engine.clone(), "ps".into(), "-q".into()]);
             let ids = match command(&cmd) {
                 Ok(s) => s,
                 Err(e) => {
                     errors += 1;
-                    eprintln!("podman ps: {e}");
+                    eprintln!("{engine} ps: {e}");
                     continue;
                 }
             };
@@ -236,7 +237,7 @@ impl Collector {
                 continue;
             }
             let mut cmd = prefix;
-            cmd.extend(["podman".into(), "inspect".into()]);
+            cmd.extend([engine.clone(), "inspect".into()]);
             cmd.extend(ids.into_iter().map(str::to_owned));
             match command(&cmd).and_then(|s| {
                 serde_json::from_str::<Vec<serde_json::Value>>(&s).map_err(|e| e.to_string())
@@ -244,7 +245,7 @@ impl Collector {
                 Ok(v) => items.extend(v),
                 Err(e) => {
                     errors += 1;
-                    eprintln!("podman inspect: {e}");
+                    eprintln!("{engine} inspect: {e}");
                 }
             }
         }
@@ -258,7 +259,12 @@ impl Collector {
         let mut seen = HashSet::new();
         let mut containers = Vec::new();
         for item in items {
-            let Some(raw) = item.get("Name").and_then(|v| v.as_str()) else {
+            // Swarm task names (`svc.1.<task id>`) change on every redeploy; the service name is stable.
+            let Some(raw) = item
+                .pointer("/Config/Labels/com.docker.swarm.service.name")
+                .or_else(|| item.get("Name"))
+                .and_then(|v| v.as_str())
+            else {
                 errors += 1;
                 continue;
             };
@@ -811,7 +817,7 @@ mod tests {
         let (found, errors) = c.containers_from_items(items.clone(), 0);
         assert_eq!(
             found.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
-            ["web_app", "database"]
+            ["web_app", "database", "api_svc"]
         );
         assert_eq!(errors, 1);
         c.config.containers.include = vec!["database".into(), "web_app".into()];

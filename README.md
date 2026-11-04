@@ -6,7 +6,7 @@ Replaces the old `mrtg-collect.py` + `mrtg-api` (Python) + `mrtg-web` (nginx) st
 
 ## How it works
 
-- **Collector** (optional): enabled when the TOML file at `MRTG_CONFIG` exists. Reads `/proc`, `/sys/class/hwmon`, `smartctl` and `podman`. Writes one RRD per target every `interval_secs`. Gauge metrics are sampled every `sample_secs` and aggregated at each cycle.
+- **Collector** (optional): enabled when the TOML file at `MRTG_CONFIG` exists. Reads `/proc`, `/sys/class/hwmon`, `smartctl` and Podman or Docker. Writes one RRD per target every `interval_secs`. Gauge metrics are sampled every `sample_secs` and aggregated at each cycle.
 - **API**: reads RRDs from `data_dir` (TOML) or `DATA_DIR`. Responses are cached (LRU) for `CACHE_TTL` seconds.
 - **Dashboard**: serves `www/` from `WWW_DIR`, substituting host name, footer and container tab label.
 
@@ -47,8 +47,8 @@ disks = ["sda"]         # required by disk_io and smart
 disk_usage_path = "/"
 
 [containers]
-engine = "podman"       # "podman" or "none"
-rootless = [{ user = "monitor", uid = 1000 }]
+engine = "podman"       # "podman", "docker" or "none"
+rootless = [{ user = "monitor", uid = 1000 }]  # Podman only
 include = []           # empty = all containers; match sanitized names (my-app -> my_app)
 exclude = []           # applied after include
 ```
