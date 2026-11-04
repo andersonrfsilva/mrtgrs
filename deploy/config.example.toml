@@ -1,0 +1,16 @@
+[collector]
+interval_secs = 300
+sample_secs = 10
+data_dir = "/var/lib/mrtg-rs"
+
+[host]
+metrics = ["cpu", "mem_swap", "loadavg", "uptime", "disk_usage", "network", "disk_io", "temperature", "smart"]
+interfaces = ["eth0"]
+disks = ["sda"]
+disk_usage_path = "/"
+
+[containers]
+engine = "podman"
+rootless = [{ user = "monitor", uid = 1000 }]
+include = []
+exclude = []

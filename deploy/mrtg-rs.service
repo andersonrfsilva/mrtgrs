@@ -1,0 +1,19 @@
+[Unit]
+Description=MRTG unificado (coletor + API + painel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/mrtg-rs
+EnvironmentFile=/etc/mrtg-rs/mrtg-rs.env
+Environment=MRTG_CONFIG=/etc/mrtg-rs/config.toml
+Restart=always
+# Binding to the Tailscale IP can fail at boot until the interface is up; avoids hitting StartLimit.
+RestartSec=5
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
+MemoryMax=96M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MRTG Performance Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="nav-brand">
+        <span class="logo-icon">📊</span>
+        <h1>MRTG Dashboard</h1>
+        <span class="host-tag">localhost</span>
+      </div>
+
+      <nav class="nav-tabs" role="tablist" aria-label="Escopos de visualização">
+        <button id="tab-host" class="tab-btn active" role="tab" aria-selected="true" aria-controls="grid-container" data-scope="host">
+          Host
+        </button>
+        <button id="tab-docker" class="tab-btn" role="tab" aria-selected="false" aria-controls="grid-container" data-scope="docker">
+          Docker
+        </button>
+      </nav>
+
+      <div class="nav-actions">
+        <div class="search-wrapper">
+          <input type="search" id="search-input" placeholder="Filtrar métricas..." aria-label="Buscar métricas ou containers">
+        </div>
+
+        <div class="periods-group" role="group" aria-label="Intervalo de tempo">
+          <button class="period-btn" data-period="-1h">1h</button>
+          <button class="period-btn" data-period="-3h">3h</button>
+          <button class="period-btn" data-period="-6h">6h</button>
+          <button class="period-btn active" data-period="-12h">12h</button>
+          <button class="period-btn" data-period="-24h">24h</button>
+          <button class="period-btn" data-period="-7d">7d</button>
+          <button class="period-btn" data-period="-30d">30d</button>
+          
+          <select id="more-periods-select" class="periods-select" aria-label="Mais períodos">
+            <option value="" disabled selected>Mais...</option>
+            <option value="-15m">15 min</option>
+            <option value="-30m">30 min</option>
+            <option value="-3d">3 dias</option>
+            <option value="-14d">14 dias</option>
+            <option value="-90d">90 dias (3m)</option>
+            <option value="-180d">180 dias (6m)</option>
+            <option value="-1y">1 ano</option>
+            <option value="-2y">2 anos</option>
+          </select>
+
+          <button id="custom-range-btn" class="period-btn custom-btn" title="Definir data e hora específicas">
+            📅 Custom
+          </button>
+        </div>
+
+        <button id="cpu-scale-toggle" class="toggle-btn active" aria-pressed="true" title="Escala de CPU: Degraus de 100% (fixa). Clique para alternar para escala automática.">
+          <span class="btn-text">CPU 100%</span>
+        </button>
+
+        <button id="theme-toggle" class="icon-btn" aria-label="Alternar tema claro/escuro" title="Alternar tema">
+          <span class="theme-icon" aria-hidden="true">🌙</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <div class="status-bar">
+      <div class="status-left">
+        <span id="target-count">Carregando métricas...</span>
+        <span id="active-range-badge" class="active-range-badge">12h</span>
+      </div>
+      <span id="loading-indicator" class="loading-spinner hidden" aria-live="polite">Atualizando...</span>
+    </div>
+
+    <div id="grid-container" class="cards-grid" role="region" aria-live="polite"></div>
+
+    <div id="empty-state" class="empty-state hidden">
+      <p>Nenhuma métrica encontrada para os critérios selecionados.</p>
+    </div>
+  </main>
+
+  <!-- Modal de Intervalo Customizado -->
+  <div id="custom-range-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="custom-range-title">
+    <div class="modal-backdrop" id="custom-range-backdrop"></div>
+    <div class="modal-content custom-range-content">
+      <div class="modal-header">
+        <h2 id="custom-range-title">📅 Intervalo Personalizado</h2>
+        <button id="custom-range-close" class="icon-btn close-btn" aria-label="Fechar janela">&times;</button>
+      </div>
+      <form id="custom-range-form" class="custom-range-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="custom-start">Início:</label>
+            <input type="datetime-local" id="custom-start" required>
+          </div>
+          <div class="form-group">
+            <label for="custom-end">Fim:</label>
+            <input type="datetime-local" id="custom-end" required>
+          </div>
+        </div>
+
+        <div class="range-presets">
+          <span class="range-presets-title">Atalhos rápidos:</span>
+          <div class="preset-chips">
+            <button type="button" class="chip-btn" data-hours="3">3h</button>
+            <button type="button" class="chip-btn" data-hours="12">12h</button>
+            <button type="button" class="chip-btn" data-days="3">3 dias</button>
+            <button type="button" class="chip-btn" data-days="14">14 dias</button>
+            <button type="button" class="chip-btn" data-days="90">90 dias</button>
+            <button type="button" class="chip-btn" data-preset="today">Hoje</button>
+            <button type="button" class="chip-btn" data-preset="yesterday">Ontem</button>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" id="custom-range-cancel" class="btn btn-secondary">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Aplicar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-container" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Detalhes da Métrica</h2>
+        <button id="modal-close" class="icon-btn close-btn" aria-label="Fechar janela de detalhes">&times;</button>
+      </div>
+      <div class="modal-stats" id="modal-stats"></div>
+      <div class="modal-chart" id="modal-chart"></div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p>MRTG RRD Dashboard &bull; localhost &bull; Tailscale Protected</p>
+  </footer>
+
+  <script src="vendor/echarts.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

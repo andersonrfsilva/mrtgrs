@@ -1,0 +1,5 @@
+FROM archlinux:base-devel
+RUN pacman -Syu --noconfirm rust rrdtool && pacman -Scc --noconfirm
+WORKDIR /src
+COPY . ./
+RUN cargo build --release --locked

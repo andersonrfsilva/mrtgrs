@@ -1,0 +1,5 @@
+FROM rust:1-trixie
+RUN apt-get update && apt-get install -y --no-install-recommends librrd-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . ./
+RUN cargo build --release --locked
