@@ -78,12 +78,13 @@ esac
     fs::write(hwmon.join("hwmon0/temp1_input"), "60000").unwrap();
     fs::write(hwmon.join("hwmon0/temp2_input"), "80000").unwrap();
     collector.sample();
-    assert_eq!(collector.cycle(), (9, 2));
+    assert_eq!(collector.cycle(), (10, 2));
 
     for (name, expected) in [
-        ("temp_coretemp", vec![70.0, 60.0]),
-        ("temp_coretemp_2", vec![30.0, 30.0]),
-        ("temp_acpitz", vec![45.0, 45.0]),
+        ("temp_coretemp_s1", vec![50.0, 0.0]),
+        ("temp_coretemp_s2", vec![70.0, 0.0]),
+        ("temp_coretemp_2_s1", vec![30.0, 0.0]),
+        ("temp_acpitz_s1", vec![45.0, 0.0]),
         ("temp_disco_sda", vec![42.0, 0.0]),
         ("smart_sda", vec![3.0, 9.0]),
         // 197/198 ausentes: desconhecido, não zero.
@@ -99,11 +100,13 @@ esac
         );
     }
     for name in [
-        "temp_nvme",
-        "temp_drivetemp",
-        "temp_broken",
+        // One RRD per sensor, no per-chip aggregate.
+        "temp_coretemp",
+        "temp_nvme_s1",
+        "temp_drivetemp_s1",
+        "temp_broken_s1",
         // Chip sem sensor de temperatura: ignorado sem erro.
-        "temp_hp",
+        "temp_hp_s1",
         // Tabela ATA vazia: nada medido, nada gravado.
         "smart_sdc",
         "smart_sdd",
@@ -119,10 +122,10 @@ esac
     config.host.metrics = vec!["temperature".into()];
     let mut collector = Collector::new(config.clone(), root.join("proc"));
     collector.sys_root = root.join("sys");
-    assert_eq!(collector.cycle(), (3, 0));
+    assert_eq!(collector.cycle(), (4, 0));
     assert_eq!(
-        last_update(boundary.path(), "temp_coretemp"),
-        vec![80.0, 70.0]
+        last_update(boundary.path(), "temp_coretemp_s2"),
+        vec![80.0, 0.0]
     );
 
     config.host.metrics = vec!["smart".into()];

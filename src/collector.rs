@@ -526,7 +526,7 @@ impl Collector {
                     }
                 })
                 .collect();
-            let values = (|| -> Result<Vec<f64>, String> {
+            let values = (|| -> Result<Vec<(String, f64)>, String> {
                 let mut values = Vec::new();
                 for entry in fs::read_dir(&path).map_err(|e| e.to_string())? {
                     let entry = entry.map_err(|e| e.to_string())?;
@@ -539,9 +539,10 @@ impl Collector {
                         if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
                             let text =
                                 fs::read_to_string(entry.path()).map_err(|e| e.to_string())?;
-                            values.push(
+                            values.push((
+                                number.to_string(),
                                 text.trim().parse::<f64>().map_err(|e| e.to_string())? / 1000.0,
-                            );
+                            ));
                         }
                     }
                 }
@@ -558,18 +559,15 @@ impl Collector {
             };
             let count = counts.entry(chip.clone()).or_default();
             *count += 1;
-            let name = if *count == 1 {
+            let chip = if *count == 1 {
                 format!("temp_{chip}")
             } else {
                 format!("temp_{chip}_{count}")
             };
-            result.push((
-                name,
-                [
-                    values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-                    values.iter().sum::<f64>() / values.len() as f64,
-                ],
-            ));
+            // One RRD per tempN_input; ds1 is unused, like temp_disco_*.
+            for (number, value) in values {
+                result.push((format!("{chip}_s{number}"), [value, 0.0]));
+            }
         }
         result
     }

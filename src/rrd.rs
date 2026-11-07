@@ -234,8 +234,9 @@ pub fn process_series(
             series.get_mut(ds).unwrap().pop();
         }
     }
+    // Temperatures only use ds0; old per-chip RRDs kept the average in ds1.
     if (target == "uptime"
-        || target.starts_with("temp_disco_")
+        || target.starts_with("temp_")
         || (target.starts_with("docker_") && target.ends_with("_cpu")))
         && ds_names.iter().any(|v| v == "ds0")
     {

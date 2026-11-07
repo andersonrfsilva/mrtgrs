@@ -146,11 +146,22 @@ fn name(scope: &str, target: &str) -> String {
         if let Some(disk) = target.strip_prefix("temp_disco_") {
             return format!("Temperatura disco {disk}");
         }
-        if let Some(chip) = target.strip_prefix("temp_") {
-            return match chip {
-                "coretemp" => "Temperatura CPU".into(),
-                "acpitz" => "Temperatura ACPI".into(),
-                _ => format!("Temperatura {chip}"),
+        if let Some(rest) = target.strip_prefix("temp_") {
+            // temp_<chip>[_<n>]_s<N>: one RRD per hwmon tempN_input.
+            let (chip, sensor) = match rest.rsplit_once("_s") {
+                Some((chip, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+                    (chip, Some(n))
+                }
+                _ => (rest, None),
+            };
+            let chip = match chip {
+                "coretemp" => "CPU",
+                "acpitz" => "ACPI",
+                _ => chip,
+            };
+            return match sensor {
+                Some(n) => format!("Temperatura {chip} sensor {n}"),
+                None => format!("Temperatura {chip}"),
             };
         }
         if let Some(disk) = target.strip_prefix("smart_") {
@@ -603,7 +614,9 @@ mod tests {
     fn target_names() {
         assert_eq!(name("host", "uptime"), "Uptime");
         assert_eq!(name("host", "temp_coretemp"), "Temperatura CPU");
-        assert_eq!(name("host", "temp_acpitz"), "Temperatura ACPI");
+        assert_eq!(name("host", "temp_coretemp_s1"), "Temperatura CPU sensor 1");
+        assert_eq!(name("host", "temp_acpitz_s1"), "Temperatura ACPI sensor 1");
+        assert_eq!(name("host", "temp_coretemp_2_s3"), "Temperatura coretemp_2 sensor 3");
         assert_eq!(name("host", "temp_k10temp"), "Temperatura k10temp");
         assert_eq!(name("host", "temp_disco_sda"), "Temperatura disco sda");
         assert_eq!(name("host", "smart_nvme0n1"), "SMART nvme0n1");
