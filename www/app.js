@@ -134,8 +134,10 @@
   // Formatting helpers
   function formatValue(val, targetId) {
     if (val === null || val === undefined || isNaN(val)) return "-";
+    if (targetId.startsWith("docker_") && targetId.endsWith("_*")) return val.toFixed(1) + "%";
     if (targetId.startsWith("temp_")) return val.toFixed(1) + " °C";
     if (targetId.startsWith("smart_")) return Math.round(val).toString();
+    if (targetId === "uptime") return Math.floor(val / 60).toLocaleString("pt-BR") + " min";
     if (targetId.includes("cpu") || targetId === "loadavg") {
       return val.toFixed(2);
     }
@@ -156,9 +158,14 @@
 
   function formatYAxis(val, targetId) {
     if (val === null || val === undefined || isNaN(val)) return "0";
+    if (targetId.startsWith("docker_") && targetId.endsWith("_*")) return Math.round(val) + "%";
     if (targetId.startsWith("temp_")) return Math.round(val) + " °C";
     if (targetId.startsWith("smart_")) return Math.round(val).toString();
-    if (targetId.includes("cpu") || targetId === "loadavg" || targetId === "uptime") {
+    if (targetId === "uptime") {
+      const min = val / 60;
+      return min >= 1000 ? Math.round(min / 1000) + "k min" : Math.round(min) + " min";
+    }
+    if (targetId.includes("cpu") || targetId === "loadavg") {
       return Math.round(val).toString();
     }
     if (targetId.includes("mem") || targetId.includes("disk") || targetId.includes("network")) {
@@ -189,11 +196,6 @@
   };
 
   function getDsLabel(target, ds) {
-    if (target.startsWith("temp_disco_") && ds === "ds0") return "Temperatura";
-    if (target.startsWith("temp_") && !target.startsWith("temp_disco_")) {
-      if (ds === "ds0") return "Máxima";
-      if (ds === "ds1") return "Média";
-    }
     if (target.startsWith("smart_")) {
       if (ds === "ds0") return "Realocados / erros de mídia";
       if (ds === "ds1") return "Pendentes / aviso crítico";
@@ -206,6 +208,118 @@
       if (target.endsWith("_mem")) return ds === "ds0" ? "Uso" : "Limite";
     }
     return ds.toUpperCase();
+  }
+
+  function palette(isDark) {
+    return isDark
+      ? ["#38bdf8", "#4ade80", "#f472b6", "#facc15", "#a78bfa", "#fb923c", "#2dd4bf", "#f87171"]
+      : ["#0284c7", "#16a34a", "#db2777", "#ca8a04", "#7c3aed", "#ea580c", "#0d9488", "#dc2626"];
+  }
+
+  // Host targets merged into a single chart, one line per sensor or data source.
+  // Virtual target ids contain "*", which valid_target() rejects, so they never
+  // collide with real RRDs.
+  const GROUPS = [
+    { target: "temp_*", name: "Temperaturas", match: (t) => t.startsWith("temp_") },
+    { target: "smart_*", name: "SMART", match: (t) => t.startsWith("smart_") },
+    {
+      target: "cpu_*",
+      name: "CPU I/O Wait / Steal / System / Other",
+      match: (t) => t === "cpu_iowait_steal" || t === "cpu_system_other",
+    },
+  ];
+
+  // Docker scope: docker_<name>_cpu and docker_<name>_mem share one percent chart.
+  function groupOf(t) {
+    if (t.scope === "host") return GROUPS.find((g) => g.match(t.target));
+    const m = /^docker_(.+)_(cpu|mem)$/.exec(t.target);
+    return m && { target: `docker_${m[1]}_*`, name: m[1], pct: true };
+  }
+
+  function groupTargets(targets) {
+    const out = [];
+    const groups = new Map();
+    for (const t of targets) {
+      const g = groupOf(t);
+      if (!g) {
+        out.push(t);
+        continue;
+      }
+      let item = groups.get(g.target);
+      if (!item) {
+        item = { scope: t.scope, target: g.target, name: g.name, pct: g.pct, members: [] };
+        groups.set(g.target, item);
+        out.push(item);
+      }
+      item.members.push(t);
+    }
+    return out;
+  }
+
+  function combineGroup(item, results) {
+    const parts = [];
+    for (const m of item.members) {
+      const r = results[m.target];
+      if (!r) continue;
+      if (m.target.endsWith("_mem") && item.pct) {
+        // Memory as percent of its limit (ds1, memory.max or host MemTotal).
+        const values = r.series.ds0.map((used, i) => {
+          const limit = r.series.ds1 && r.series.ds1[i];
+          return used != null && limit ? (used / limit) * 100 : null;
+        });
+        const known = values.filter((v) => v != null);
+        parts.push({
+          key: `${m.target}:pct`,
+          label: "Memória (% do limite)",
+          timestamps: r.timestamps,
+          values,
+          stats: {
+            max: known.length ? Math.max(...known) : null,
+            current: known.length ? known[known.length - 1] : null,
+          },
+        });
+        continue;
+      }
+      const label = m.name.replace(/^(Temperatura|SMART) /, "");
+      // The API returns only ds0 for temp_* and docker *_cpu targets.
+      for (const ds of Object.keys(r.series)) {
+        parts.push({
+          key: `${m.target}:${ds}`,
+          label: m.target.startsWith("smart_") ? `${label} ${getDsLabel(m.target, ds)}`
+            : m.target.startsWith("cpu_") || item.pct ? getDsLabel(m.target, ds) : label,
+          timestamps: r.timestamps,
+          values: r.series[ds],
+          stats: r.stats[ds],
+        });
+      }
+    }
+    if (!parts.length) return null;
+    const timestamps = [...new Set(parts.flatMap((p) => p.timestamps))].sort((a, b) => a - b);
+    const index = new Map(timestamps.map((t, i) => [t, i]));
+    const data = { timestamps, series: {}, stats: {}, labels: {} };
+    for (const p of parts) {
+      const values = new Array(timestamps.length).fill(null);
+      p.timestamps.forEach((t, i) => {
+        values[index.get(t)] = p.values[i];
+      });
+      data.series[p.key] = values;
+      data.stats[p.key] = p.stats;
+      data.labels[p.key] = p.label;
+    }
+    return data;
+  }
+
+  // query-batch accepts at most 32 targets per request.
+  async function queryTargets(scope, targets, signal) {
+    const results = {};
+    for (let i = 0; i < targets.length; i += 32) {
+      const targetsQuery = targets.slice(i, i + 32).map((t) => `target=${encodeURIComponent(t)}`).join("&");
+      const url = `/api/query-batch?scope=${encodeURIComponent(scope)}&start=${encodeURIComponent(state.period)}&end=${encodeURIComponent(state.end || "now")}&${targetsQuery}`;
+      const resp = await fetch(url, { signal });
+      if (!resp.ok) throw new Error("Erro na consulta em lote");
+      Object.assign(results, (await resp.json()).results || {});
+    }
+    return results;
   }
 
   function formatTimestamp(ts, timestamps) {
@@ -273,7 +387,7 @@
     try {
       const resp = await fetch("/api/targets");
       if (!resp.ok) throw new Error("Erro ao carregar lista de métricas");
-      state.targets = await resp.json();
+      state.targets = groupTargets(await resp.json());
       renderGrid();
     } catch (err) {
       el.targetCount.textContent = "Erro ao conectar com API";
@@ -315,7 +429,7 @@
     const curStat = createStatItem("Atual", "-");
 
     statsRow.appendChild(maxStat.container);
-    statsRow.appendChild(avgStat.container);
+    if (!item.members) statsRow.appendChild(avgStat.container);
     statsRow.appendChild(curStat.container);
 
     const chartContainer = document.createElement("div");
@@ -350,7 +464,8 @@
       if (t.scope !== state.scope) return false;
       if (!state.search) return true;
       const q = state.search.toLowerCase();
-      return t.name.toLowerCase().includes(q) || t.target.toLowerCase().includes(q);
+      return t.name.toLowerCase().includes(q) || t.target.toLowerCase().includes(q) ||
+        (t.members || []).some((m) => m.name.toLowerCase().includes(q) || m.target.toLowerCase().includes(q));
     });
 
     const liveKeys = new Set(filtered.map(cardKey));
@@ -410,7 +525,15 @@
   function renderCard(item, container, statRefs, data) {
     // Update stats from first DS (or highest)
     const dsKeys = Object.keys(data.stats);
-    if (dsKeys.length > 0) {
+    if (item.members) {
+      // Grouped chart: hottest sensor / highest SMART counter across all lines.
+      const pick = (field) => {
+        const v = Math.max(...dsKeys.map((ds) => data.stats[ds][field] ?? -Infinity));
+        return Number.isFinite(v) ? v : null;
+      };
+      statRefs.maxStat.val.textContent = formatValue(pick("max"), item.target);
+      statRefs.curStat.val.textContent = formatValue(pick("current"), item.target);
+    } else if (dsKeys.length > 0) {
       const firstDs = data.stats[dsKeys[0]];
       statRefs.maxStat.val.textContent = formatValue(firstDs.max, item.target);
       statRefs.avgStat.val.textContent = formatValue(firstDs.avg, item.target);
@@ -428,9 +551,9 @@
     }
 
     const seriesList = [];
-    const colors = isDark ? ["#38bdf8", "#4ade80", "#f472b6"] : ["#0284c7", "#16a34a", "#db2777"];
+    const colors = palette(isDark);
 
-    const isCpuTarget = state.cpuStepped && item.target.includes("cpu");
+    const isCpuTarget = state.cpuStepped && (item.target.includes("cpu") || item.pct);
     let peak = 0;
     if (data.stats) {
       Object.values(data.stats).forEach((s) => {
@@ -441,7 +564,7 @@
 
     dsKeys.forEach((ds, idx) => {
       const sObj = {
-        name: getDsLabel(item.target, ds),
+        name: data.labels ? data.labels[ds] : getDsLabel(item.target, ds),
         type: "line",
         showSymbol: false,
         connectNulls: true,
@@ -552,17 +675,14 @@
 
   async function fetchAndRenderBatch(scope, items, refs, signal) {
     try {
-      const targetsQuery = items.map(i => `target=${encodeURIComponent(i.target)}`).join("&");
-      const url = `/api/query-batch?scope=${encodeURIComponent(scope)}&start=${encodeURIComponent(state.period)}&end=${encodeURIComponent(state.end || "now")}&${targetsQuery}`;
-      const resp = await fetch(url, { signal });
-      if (!resp.ok) throw new Error("Erro na consulta em lote");
-      const data = await resp.json();
+      const results = await queryTargets(scope, items.flatMap((i) => (i.members ? i.members.map((m) => m.target) : [i.target])), signal);
 
       for (const item of items) {
         const ref = refs.get(cardKey(item));
         if (!ref) continue;
-        if (data.results && data.results[item.target]) {
-          renderCard(item, ref.container, ref.statRefs, data.results[item.target]);
+        const result = item.members ? combineGroup(item, results) : results[item.target];
+        if (result) {
+          renderCard(item, ref.container, ref.statRefs, result);
         } else {
           renderCardError(item, ref.container);
         }
@@ -596,10 +716,16 @@
     }
 
     try {
-      const url = `/api/query?scope=${encodeURIComponent(item.scope)}&target=${encodeURIComponent(item.target)}&start=${encodeURIComponent(state.period)}&end=${encodeURIComponent(state.end || "now")}`;
-      const resp = await fetch(url, { signal });
-      if (!resp.ok) throw new Error("Erro na consulta");
-      const data = await resp.json();
+      let data;
+      if (item.members) {
+        data = combineGroup(item, await queryTargets(item.scope, item.members.map((m) => m.target), signal));
+        if (!data) throw new Error("Erro na consulta");
+      } else {
+        const url = `/api/query?scope=${encodeURIComponent(item.scope)}&target=${encodeURIComponent(item.target)}&start=${encodeURIComponent(state.period)}&end=${encodeURIComponent(state.end || "now")}`;
+        const resp = await fetch(url, { signal });
+        if (!resp.ok) throw new Error("Erro na consulta");
+        data = await resp.json();
+      }
 
       const dsKeys = Object.keys(data.stats);
       dsKeys.forEach((ds) => {
@@ -611,7 +737,7 @@
 
         const dsTitle = document.createElement("span");
         dsTitle.style.fontWeight = "700";
-        dsTitle.textContent = `${getDsLabel(item.target, ds)}:`;
+        dsTitle.textContent = `${data.labels ? data.labels[ds] : getDsLabel(item.target, ds)}:`;
 
         const maxSpan = document.createElement("span");
         maxSpan.textContent = `Max: ${formatValue(dsStat.max, item.target)}`;
@@ -624,7 +750,7 @@
 
         box.appendChild(dsTitle);
         box.appendChild(maxSpan);
-        box.appendChild(avgSpan);
+        if (!item.members) box.appendChild(avgSpan);
         box.appendChild(curSpan);
         el.modalStats.appendChild(box);
       });
@@ -632,8 +758,8 @@
       const isDark = state.theme === "dark";
       state.modalChart = echarts.init(el.modalChart, null, { renderer: "canvas" });
 
-      const colors = isDark ? ["#38bdf8", "#4ade80", "#f472b6"] : ["#0284c7", "#16a34a", "#db2777"];
-      const isCpuTarget = state.cpuStepped && item.target.includes("cpu");
+      const colors = palette(isDark);
+      const isCpuTarget = state.cpuStepped && (item.target.includes("cpu") || item.pct);
       let peak = 0;
       if (data.stats) {
         Object.values(data.stats).forEach((s) => {
@@ -644,7 +770,7 @@
 
       const seriesList = dsKeys.map((ds, idx) => {
         const sObj = {
-          name: getDsLabel(item.target, ds),
+          name: data.labels ? data.labels[ds] : getDsLabel(item.target, ds),
           type: "line",
           showSymbol: false,
           connectNulls: true,
